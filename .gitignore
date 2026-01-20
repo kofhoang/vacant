@@ -22,3 +22,6 @@ erl_crash.dump
 # Ignore package tarball (built via "mix hex.build").
 vacant-*.tar
 
+vacant.md
+.DS_Store
+.vscode/settings.json

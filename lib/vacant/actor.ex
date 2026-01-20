@@ -20,18 +20,24 @@ defmodule Vacant.Actor do
           utility_fn: utility_fn()
         }
 
-  @exit_probability 0.01
+  @default_exit_probability 0.01
 
   # Public API
 
-  @spec start(utility_fn(), satisfaction_fn(), pos_integer()) :: pid()
-  def start(utility_fn, satisfaction_fn, interval) do
-    spawn(fn ->
+  @spec start(utility_fn(), satisfaction_fn(), pos_integer(), keyword()) :: pid()
+  def start(utility_fn, satisfaction_fn, interval, opts \\ []) do
+    exit_probability = Keyword.get(opts, :exit_probability, @default_exit_probability)
+    link = Keyword.get(opts, :link, false)
+
+    spawner = if link, do: &spawn_link/1, else: &spawn/1
+
+    spawner.(fn ->
       state = %{
         current_resource: nil,
         utility_fn: utility_fn,
         satisfaction_fn: satisfaction_fn,
-        interval: interval
+        interval: interval,
+        exit_probability: exit_probability
       }
 
       schedule_tick(interval)
@@ -44,11 +50,11 @@ defmodule Vacant.Actor do
   defp loop(state) do
     receive do
       :tick ->
-        if should_exit?() do
+        if should_exit?(state.exit_probability) do
           exit_market(state)
         else
           state
-          |> update_dwell_time()
+          |> incr_tick_count()
           |> maybe_search()
           |> continue_loop()
         end
@@ -66,7 +72,7 @@ defmodule Vacant.Actor do
 
   # Exit behavior
 
-  defp should_exit?, do: :rand.uniform() < @exit_probability
+  defp should_exit?(probability), do: :rand.uniform() < probability
 
   defp exit_market(%{current_resource: nil}), do: :ok
 
@@ -76,9 +82,9 @@ defmodule Vacant.Actor do
 
   # Dwell time tracking
 
-  defp update_dwell_time(%{current_resource: nil} = state), do: state
+  defp incr_tick_count(%{current_resource: nil} = state), do: state
 
-  defp update_dwell_time(%{current_resource: res} = state) do
+  defp incr_tick_count(%{current_resource: res} = state) do
     %{state | current_resource: %{res | ticks: res.ticks + 1}}
   end
 
@@ -131,9 +137,15 @@ defmodule Vacant.Actor do
   end
 
   defp acquire_success(pid, state) do
+    # If actor already has a resource, need to release it first!
+    release_current(state.current_resource)
+
     attrs = get_resource_attrs(pid)
     %{state | current_resource: %{pid: pid, ticks: 0, attrs: attrs}}
   end
+
+  defp release_current(nil), do: :ok
+  defp release_current(%{pid: pid}), do: send(pid, :vacate)
 
   defp get_resource_attrs(pid) do
     send(pid, {:status, self()})
