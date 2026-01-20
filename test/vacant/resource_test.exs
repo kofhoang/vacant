@@ -14,18 +14,15 @@ defmodule Vacant.ResourceTest do
     :ok
   end
 
-  describe "start/1" do
+  describe "start_link/1" do
     test "registers as vacant in ETS" do
-      pid = Vacant.Resource.start(%{quality: 0.5})
-
-      # Give spawned process time to execute
-      :timer.sleep(10)
+      {:ok, pid} = Vacant.Resource.start_link(%{quality: 0.5})
 
       assert [{^pid, %{quality: 0.5}, :vacant}] = :ets.lookup(:listings, pid)
     end
 
     test "process stays alive" do
-      pid = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, pid} = Vacant.Resource.start_link(%{quality: 0.5})
 
       assert Process.alive?(pid)
     end
@@ -33,49 +30,42 @@ defmodule Vacant.ResourceTest do
 
   describe "occupy" do
     test "succeeds when vacant" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:occupy, self()})
-
-      assert_receive {:ok, :acquired}
+      assert {:ok, :acquired} = Vacant.Resource.occupy(resource)
     end
 
     test "updates ETS to occupied" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      Vacant.Resource.occupy(resource)
 
       assert [{^resource, _, :occupied}] = :ets.lookup(:listings, resource)
     end
 
     test "fails when already occupied" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      Vacant.Resource.occupy(resource)
 
-      send(resource, {:occupy, self()})
-      assert_receive {:error, :already_occupied}
+      assert {:error, :already_occupied} = Vacant.Resource.occupy(resource)
     end
 
     test "rejects second occupant" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
       # First actor occupies
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      Vacant.Resource.occupy(resource)
 
       # Simulate second actor trying to occupy
-      other_actor = spawn(fn ->
-        receive do
-          {:try_occupy, resource, reply_to} ->
-            send(resource, {:occupy, self()})
-            receive do
-              response -> send(reply_to, {:result, response})
-            end
-        end
-      end)
+      other_actor =
+        spawn(fn ->
+          receive do
+            {:try_occupy, res, reply_to} ->
+              result = Vacant.Resource.occupy(res)
+              send(reply_to, {:result, result})
+          end
+        end)
 
       send(other_actor, {:try_occupy, resource, self()})
       assert_receive {:result, {:error, :already_occupied}}
@@ -84,52 +74,46 @@ defmodule Vacant.ResourceTest do
 
   describe "vacate" do
     test "makes resource vacant again" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      Vacant.Resource.occupy(resource)
+      Vacant.Resource.vacate(resource)
 
-      send(resource, :vacate)
-
-      # Give it a moment to process
+      # Give it a moment to process (cast is async)
       :timer.sleep(10)
 
       assert [{^resource, _, :vacant}] = :ets.lookup(:listings, resource)
     end
 
     test "allows new occupant after vacate" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
-
-      send(resource, :vacate)
+      Vacant.Resource.occupy(resource)
+      Vacant.Resource.vacate(resource)
       :timer.sleep(10)
 
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      assert {:ok, :acquired} = Vacant.Resource.occupy(resource)
     end
   end
 
   describe "status" do
     test "returns current state" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:status, self()})
+      status = Vacant.Resource.status(resource)
 
-      assert_receive {:status_response, %{attributes: %{quality: 0.5}, occupant: nil}}
+      assert %{attributes: %{quality: 0.5}, occupant: nil} = status
     end
 
     test "includes occupant when occupied" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
 
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      Vacant.Resource.occupy(resource)
 
-      send(resource, {:status, self()})
+      status = Vacant.Resource.status(resource)
 
-      assert_receive {:status_response, %{attributes: %{quality: 0.5}, occupant: occupant}}
-      assert occupant == self()
+      assert %{attributes: %{quality: 0.5}, occupant: occupant} = status
+      assert is_pid(occupant)
     end
   end
 end

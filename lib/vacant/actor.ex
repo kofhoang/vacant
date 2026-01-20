@@ -77,7 +77,7 @@ defmodule Vacant.Actor do
   defp exit_market(%{current_resource: nil}), do: :ok
 
   defp exit_market(%{current_resource: %{pid: pid}}) do
-    send(pid, :vacate)
+    Vacant.Resource.vacate(pid)
   end
 
   # Dwell time tracking
@@ -128,9 +128,7 @@ defmodule Vacant.Actor do
   end
 
   defp try_acquire(pid, state) do
-    send(pid, {:occupy, self()})
-
-    receive do
+    case Vacant.Resource.occupy(pid) do
       {:ok, :acquired} -> acquire_success(pid, state)
       {:error, :already_occupied} -> state
     end
@@ -145,15 +143,12 @@ defmodule Vacant.Actor do
   end
 
   defp release_current(nil), do: :ok
-  defp release_current(%{pid: pid}), do: send(pid, :vacate)
+  defp release_current(%{pid: pid}), do: Vacant.Resource.vacate(pid)
 
   defp get_resource_attrs(pid) do
-    send(pid, {:status, self()})
-
-    receive do
-      {:status_response, %{attributes: attrs}} -> attrs
-    after
-      1000 -> %{}
+    case Vacant.Resource.status(pid) do
+      %{attributes: attrs} -> attrs
+      _ -> %{}
     end
   end
 end

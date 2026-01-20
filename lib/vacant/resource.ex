@@ -1,30 +1,34 @@
 defmodule Vacant.Resource do
-  def start(attributes) do
-    spawn(fn ->
-      pid = self()
-      :ets.insert(:listings, {pid, attributes, :vacant})
-      loop(%{attributes: attributes, occupant: nil})
-    end)
+  use GenServer
+
+  def occupy(pid), do: GenServer.call(pid, :occupy)
+  def vacate(pid), do: GenServer.cast(pid, :vacate)
+  def status(pid), do: GenServer.call(pid, :get_status)
+
+  def start_link(default) do
+    GenServer.start_link(__MODULE__, default)
   end
 
-  def loop(%{attributes: attributes, occupant: occupant} = state) do
-    receive do
-      :vacate ->
-        :ets.insert(:listings, {self(), attributes, :vacant})
-        loop(%{state | occupant: nil})
+  def init(attrs) do
+    :ets.insert(:listings, {self(), attrs, :vacant})
+    {:ok, %{attributes: attrs, occupant: nil}}
+  end
 
-      {:occupy, from} when occupant == nil ->
-        :ets.insert(:listings, {self(), attributes, :occupied})
-        send(from, {:ok, :acquired})
-        loop(%{state | occupant: from})
+  def handle_call(:occupy, {caller_pid, _ref}, %{occupant: nil} = state) do
+    :ets.insert(:listings, {self(), state.attributes, :occupied})
+    {:reply, {:ok, :acquired}, %{state | occupant: caller_pid}}
+  end
 
-      {:occupy, from} ->
-        send(from, {:error, :already_occupied})
-        loop(state)
+  def handle_call(:occupy, _from, state) do
+    {:reply, {:error, :already_occupied}, state}
+  end
 
-      {:status, from} ->
-        send(from, {:status_response, state})
-        loop(state)
-    end
+  def handle_call(:get_status, _from, state) do
+    {:reply, state, state}
+  end
+
+  def handle_cast(:vacate, state) do
+    :ets.insert(:listings, {self(), state.attributes, :vacant})
+    {:noreply, %{state | occupant: nil}}
   end
 end
