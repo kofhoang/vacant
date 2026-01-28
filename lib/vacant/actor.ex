@@ -6,64 +6,48 @@ defmodule Vacant.Actor do
   When dissatisfied (or resourceless), they search for vacant resources and
   attempt to acquire the best one.
   """
+  use GenServer
 
-  # Types
-
-  @type satisfaction_fn :: (attrs :: map(), ticks :: non_neg_integer() -> float())
-  @type utility_fn :: (attrs :: map() -> float())
-  @type current_resource :: %{pid: pid(), ticks: non_neg_integer(), attrs: map()} | nil
-
-  @type state :: %{
-          current_resource: current_resource(),
-          interval: pos_integer(),
-          satisfaction_fn: satisfaction_fn(),
-          utility_fn: utility_fn()
-        }
-
-  @default_exit_probability 0.01
+  def start_link(attr) do
+    GenServer.start_link(
+      __MODULE__,
+      attr
+    )
+  end
 
   # Public API
-
-  @spec start(utility_fn(), satisfaction_fn(), pos_integer(), keyword()) :: pid()
-  def start(utility_fn, satisfaction_fn, interval, opts \\ []) do
-    exit_probability = Keyword.get(opts, :exit_probability, @default_exit_probability)
-    link = Keyword.get(opts, :link, false)
-
-    spawner = if link, do: &spawn_link/1, else: &spawn/1
-
-    spawner.(fn ->
-      state = %{
-        current_resource: nil,
+  def init(%{
         utility_fn: utility_fn,
         satisfaction_fn: satisfaction_fn,
         interval: interval,
         exit_probability: exit_probability
-      }
+      }) do
+    schedule_tick(interval)
 
-      schedule_tick(interval)
-      loop(state)
-    end)
+    {:ok,
+     %{
+       current_resource: nil,
+       utility_fn: utility_fn,
+       satisfaction_fn: satisfaction_fn,
+       interval: interval,
+       exit_probability: exit_probability
+     }}
   end
 
   # Main loop
+  def handle_info(:tick, state) do
+    if should_exit?(state.exit_probability) do
+      exit_market(state)
+      {:stop, :exited, state}
+    else
+      new_state =
+        state
+        |> incr_tick_count()
+        |> maybe_search()
 
-  defp loop(state) do
-    receive do
-      :tick ->
-        if should_exit?(state.exit_probability) do
-          exit_market(state)
-        else
-          state
-          |> incr_tick_count()
-          |> maybe_search()
-          |> continue_loop()
-        end
+      schedule_tick(new_state.interval)
+      {:noreply, new_state}
     end
-  end
-
-  defp continue_loop(state) do
-    schedule_tick(state.interval)
-    loop(state)
   end
 
   defp schedule_tick(interval) do

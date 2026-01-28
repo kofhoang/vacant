@@ -30,9 +30,14 @@ defmodule Vacant.ActorTest do
     :ok
   end
 
-  describe "start/3" do
+  describe "start_link/1" do
     test "creates a living process" do
-      pid = Vacant.Actor.start(&simple_utility/1, &always_satisfied/2, 1000, exit_probability: 0, link: true)
+      {:ok, pid} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: &always_satisfied/2,
+        interval: 1000,
+        exit_probability: 0
+      })
 
       assert Process.alive?(pid)
     end
@@ -40,10 +45,15 @@ defmodule Vacant.ActorTest do
 
   describe "resource acquisition" do
     test "acquires vacant resource when resourceless" do
-      resource = Vacant.Resource.start(%{quality: 0.8})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.8})
       :timer.sleep(10)  # Wait for resource to register
 
-      _actor = Vacant.Actor.start(&simple_utility/1, &always_satisfied/2, 50, exit_probability: 0, link: true)
+      {:ok, _actor} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: &always_satisfied/2,
+        interval: 50,
+        exit_probability: 0
+      })
 
       # Wait for actor to tick and acquire
       :timer.sleep(150)
@@ -52,11 +62,16 @@ defmodule Vacant.ActorTest do
     end
 
     test "acquires best resource by utility" do
-      low = Vacant.Resource.start(%{quality: 0.2})
-      high = Vacant.Resource.start(%{quality: 0.9})
+      {:ok, low} = Vacant.Resource.start_link(%{quality: 0.2})
+      {:ok, high} = Vacant.Resource.start_link(%{quality: 0.9})
       :timer.sleep(10)  # Wait for resources to register
 
-      _actor = Vacant.Actor.start(&simple_utility/1, &always_satisfied/2, 50, exit_probability: 0, link: true)
+      {:ok, _actor} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: &always_satisfied/2,
+        interval: 50,
+        exit_probability: 0
+      })
 
       :timer.sleep(150)
 
@@ -66,15 +81,19 @@ defmodule Vacant.ActorTest do
     end
 
     test "does nothing when no vacant resources" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
       :timer.sleep(10)
 
       # Occupy the only resource
-      send(resource, {:occupy, self()})
-      assert_receive {:ok, :acquired}
+      Vacant.Resource.occupy(resource)
 
       # Actor starts but finds nothing
-      actor = Vacant.Actor.start(&simple_utility/1, &always_satisfied/2, 50, exit_probability: 0, link: true)
+      {:ok, actor} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: &always_satisfied/2,
+        interval: 50,
+        exit_probability: 0
+      })
 
       :timer.sleep(150)
 
@@ -86,18 +105,23 @@ defmodule Vacant.ActorTest do
   describe "chain propagation" do
     test "releases old resource when acquiring new one" do
       # Actor will acquire first, then when dissatisfied, acquire second
-      first = Vacant.Resource.start(%{quality: 0.3})
+      {:ok, first} = Vacant.Resource.start_link(%{quality: 0.3})
       :timer.sleep(20)  # Wait for resource to register
 
       # Start actor - dissatisfied after 1 tick (so it switches on tick 2)
-      _actor = Vacant.Actor.start(&simple_utility/1, satisfied_for(1), 50, exit_probability: 0, link: true)
+      {:ok, _actor} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: satisfied_for(1),
+        interval: 50,
+        exit_probability: 0
+      })
 
       # Wait for initial acquisition
       :timer.sleep(100)
       assert [{^first, _, :occupied}] = :ets.lookup(:listings, first)
 
       # Add better resource
-      second = Vacant.Resource.start(%{quality: 0.9})
+      {:ok, second} = Vacant.Resource.start_link(%{quality: 0.9})
       :timer.sleep(20)  # Wait for resource to register
 
       # Wait for actor to become dissatisfied and switch (multiple ticks)
@@ -111,16 +135,21 @@ defmodule Vacant.ActorTest do
 
   describe "satisfaction function" do
     test "does not search when satisfied" do
-      resource = Vacant.Resource.start(%{quality: 0.5})
+      {:ok, resource} = Vacant.Resource.start_link(%{quality: 0.5})
       :timer.sleep(10)  # Wait for resource to register
 
-      _actor = Vacant.Actor.start(&simple_utility/1, &always_satisfied/2, 50, exit_probability: 0, link: true)
+      {:ok, _actor} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: &always_satisfied/2,
+        interval: 50,
+        exit_probability: 0
+      })
 
       :timer.sleep(150)
       assert [{^resource, _, :occupied}] = :ets.lookup(:listings, resource)
 
       # Add another resource
-      second = Vacant.Resource.start(%{quality: 0.9})
+      {:ok, second} = Vacant.Resource.start_link(%{quality: 0.9})
       :timer.sleep(10)
 
       # Wait - actor should NOT switch because always satisfied
@@ -131,17 +160,22 @@ defmodule Vacant.ActorTest do
     end
 
     test "searches when dissatisfied" do
-      first = Vacant.Resource.start(%{quality: 0.3})
+      {:ok, first} = Vacant.Resource.start_link(%{quality: 0.3})
       :timer.sleep(10)
 
       # Never satisfied - will always look for better
-      _actor = Vacant.Actor.start(&simple_utility/1, &never_satisfied/2, 50, exit_probability: 0, link: true)
+      {:ok, _actor} = Vacant.Actor.start_link(%{
+        utility_fn: &simple_utility/1,
+        satisfaction_fn: &never_satisfied/2,
+        interval: 50,
+        exit_probability: 0
+      })
 
       :timer.sleep(150)
       assert [{^first, _, :occupied}] = :ets.lookup(:listings, first)
 
       # Add better resource
-      second = Vacant.Resource.start(%{quality: 0.9})
+      {:ok, second} = Vacant.Resource.start_link(%{quality: 0.9})
       :timer.sleep(10)
 
       :timer.sleep(200)
